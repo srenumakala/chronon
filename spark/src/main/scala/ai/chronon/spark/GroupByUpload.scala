@@ -170,6 +170,7 @@ object GroupByUpload {
 
   def run(groupByConf: api.GroupBy,
           endDs: String,
+          tableLocation: String,
           tableUtilsOpt: Option[TableUtils] = None,
           showDf: Boolean = false,
           jsonPercent: Int = 1): Unit = {
@@ -234,7 +235,7 @@ object GroupByUpload {
     kvDf
       .union(metaDf)
       .withColumn("ds", lit(endDs))
-      .saveUnPartitioned(groupByConf.metaData.uploadTable, groupByConf.metaData.tableProps)
+      .saveUnPartitioned(groupByConf.metaData.uploadTable, groupByConf.metaData.tableProps, Option.apply(tableLocation))
 
     val kvDfReloaded = tableUtils.sparkSession
       .table(groupByConf.metaData.uploadTable)

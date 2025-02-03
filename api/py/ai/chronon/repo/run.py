@@ -379,6 +379,7 @@ class Runner:
             self.conf_type = args.conf_type
         self.ds = args.end_ds if hasattr(args, "end_ds") and args.end_ds else args.ds
         self.start_ds = args.start_ds if hasattr(args, "start_ds") and args.start_ds else None
+        self.table_location = args.table_location if(args.table_location) else None
         self.parallelism = int(args.parallelism) if hasattr(args, "parallelism") and args.parallelism else 1
         self.jar_path = jar_path
         self.args = args.args if args.args else ""
@@ -502,7 +503,10 @@ class Runner:
             online_class=self.online_class,
         )
         override_start_partition_arg = " --start-partition-override=" + start_ds if start_ds else ""
-        final_args = base_args + " " + str(self.args) + override_start_partition_arg
+        table_location_arg = (
+                "--table-location=" + self.table_location
+        )
+        final_args = base_args + " " + str(self.args) + override_start_partition_arg + " " + table_location_arg
         return final_args
 
 
@@ -620,6 +624,10 @@ if __name__ == "__main__":
         "--render-info",
         help="Path to script rendering additional information of the given config. "
         + "Only applicable when mode is set to info",
+    )
+    parser.add_argument(
+        "--table-location",
+        help="S3 location path of where table to be stored. Used for s3 tables, schema gets created in Glue",
     )
     set_defaults(parser)
     pre_parse_args, _ = parser.parse_known_args()

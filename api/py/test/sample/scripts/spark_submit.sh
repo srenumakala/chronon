@@ -34,7 +34,7 @@ unset PYSPARK_DRIVER_PYTHON
 unset PYSPARK_PYTHON
 unset SPARK_HOME
 unset SPARK_CONF_DIR
-export LOG4J_FILE="${CHRONON_WORKING_DIR}/log4j_file"
+export LOG4J_FILE="${CHRONON_WORKING_DIR}/log4j.properties"
 cat > ${LOG4J_FILE} << EOF
 log4j.rootLogger=INFO, stdout
 log4j.appender.stdout=org.apache.log4j.ConsoleAppender
@@ -53,11 +53,11 @@ $SPARK_SUBMIT_PATH \
 --conf spark.local.dir=${CHRONON_WORKING_DIR} \
 --conf spark.jars.ivy=${CHRONON_WORKING_DIR} \
 --conf spark.executor.cores=${EXECUTOR_CORES:-1} \
---conf spark.chronon.partition.column="${PARTITION_COLUMN:-ds}" \
+--conf spark.chronon.partition.column="${PARTITION_COLUMN:-date_key}" \
 --conf spark.chronon.partition.format="${PARTITION_FORMAT:-yyyy-MM-dd}" \
 --conf spark.chronon.backfill.validation.enabled="${ENABLE_VALIDATION:-false}" \
 --deploy-mode client \
---master "${JOB_MODE:-yarn}" \
+--master "yarn" \
 --executor-memory "${EXECUTOR_MEMORY:-2G}" \
 --driver-memory "${DRIVER_MEMORY:-1G}" \
 --conf spark.app.name=${APP_NAME} \

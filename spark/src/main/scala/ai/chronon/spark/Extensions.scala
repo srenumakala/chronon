@@ -150,8 +150,8 @@ object Extensions {
                                                    sortByCols = sortByCols)
     }
 
-    def saveUnPartitioned(tableName: String, tableProperties: Map[String, String] = null): Unit = {
-      TableUtils(df.sparkSession).insertUnPartitioned(df, tableName, tableProperties)
+    def saveUnPartitioned(tableName: String, tableProperties: Map[String, String] = null, tableLocation: Option[String] = None): Unit = {
+      TableUtils(df.sparkSession).insertUnPartitioned(df, tableName, tableProperties, tableLocation)
     }
 
     def prefixColumnNames(prefix: String, columns: Seq[String]): DataFrame = {

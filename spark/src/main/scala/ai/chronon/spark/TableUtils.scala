@@ -42,6 +42,9 @@ import scala.collection.{Seq, mutable}
 import scala.collection.immutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
 import scala.util.{Failure, Success, Try}
+import java.time.LocalDate
+import scala.collection.JavaConverters.{asScalaBufferConverter, asScalaIteratorConverter}
+import java.time.format.DateTimeFormatter
 
 /**
   * Trait to track the table format in use by a Chronon dataset and some utility methods to help
@@ -109,9 +112,16 @@ case class DefaultFormatProvider(sparkSession: SparkSession) extends FormatProvi
       Iceberg
     } else if (isDeltaTable(tableName)) {
       DeltaLake
+    } else if(isS3table(tableName)) {
+      S3Table
     } else {
       Hive
     }
+  }
+
+  //currently supporting only orc tables
+  private def isS3table(tableName: String) = {
+    tableName.contains("search")
   }
 
   private def isIcebergTable(tableName: String): Boolean =
@@ -274,6 +284,83 @@ case object DeltaLake extends Format {
   override def supportSubPartitionsFilter: Boolean = true
 }
 
+// Creating a s3 parquet reader and implementing method for GroupByLoad only
+// author: srenumakala
+case object S3Table extends Format {
+  private val logger = LoggerFactory.getLogger(getClass)
+
+  def tableExists(tableName: String)(implicit sparkSession: SparkSession): Boolean = {
+    logger.info(s"Checking if table exists: $tableName")
+    try {
+      sparkSession.sql("SELECT * FROM " + tableName + " LIMIT 1")
+      logger.info(s"Table $tableName exists")
+      true
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Table $tableName does not exist: ${e.getMessage}")
+        false
+    }
+  }
+
+  def createTable(tableName: String)(implicit sparkSession: SparkSession): Unit = {
+    val s3path = "s3://sr-search-data-886239521314/processed-gc-logs/search_records/*/*/*/"
+    logger.info(s"Creating table $tableName")
+
+    val df = try {
+      logger.info(s"Attempting to read ORC format from $s3path")
+      sparkSession.read.orc(s3path)
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Failed to read ORC format: ${e.getMessage}")
+        try {
+          logger.info(s"Attempting to read Parquet format from $s3path")
+          sparkSession.read.parquet(s3path)
+        } catch {
+          case _: Exception =>
+            logger.error(s"Failed to read both ORC and Parquet formats from $s3path")
+            throw new Exception(s"Failed to read both ORC and Parquet formats from $s3path")
+        }
+    }
+
+    logger.info(s"Creating temporary view for table: $tableName")
+    df.createOrReplaceTempView(tableName)
+    logger.info(s"Successfully created temporary view for table: $tableName")
+  }
+
+  override def partitions(tableName: String)(implicit sparkSession: SparkSession): Seq[Map[String, String]] = {
+/*    logger.info(s"Retrieving partitions for table: $tableName")
+
+    val datePartitions = sparkSession.sql(s"SELECT DISTINCT date_key from $tableName ORDER BY date_key")
+
+    val partitionsList = datePartitions.collect().map(row =>
+      Map("date_key" -> row.getString(0))
+    ).toSeq
+
+    logger.info(s"Found ${partitionsList.length} partitions")
+    partitionsList*/
+
+    logger.info(s"Retrieving partitions for table: $tableName")
+    val startDate = LocalDate.of(2025, 1, 1)
+    val endDate = LocalDate.of(2025, 1, 31)
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    val partitionsList = startDate.datesUntil(endDate.plusDays(1))
+      .iterator()
+      .asScala
+      .map(date => Map("date_key" -> date.format(formatter)))
+      .toSeq
+
+    logger.info(s"Generated ${partitionsList.length} dates")
+    partitionsList
+  }
+
+  override def createTableTypeString: String = ""
+
+  override def fileFormatString(format: String): String = ""
+
+  override def supportSubPartitionsFilter: Boolean = false
+}
+
 case class TableUtils(sparkSession: SparkSession) {
   @transient lazy val logger = LoggerFactory.getLogger(getClass)
 
@@ -348,6 +435,10 @@ case class TableUtils(sparkSession: SparkSession) {
   def loadEntireTable(tableName: String): DataFrame = sparkSession.table(tableName)
 
   def isPartitioned(tableName: String): Boolean = {
+    val format = tableReadFormat(tableName)
+    if(format == S3Table && !S3Table.tableExists(tableName)(sparkSession)) {
+      S3Table.createTable(tableName)(sparkSession)
+    }
     // TODO: use proper way to detect if a table is partitioned or not
     val schema = getSchemaFromTable(tableName)
     schema.fieldNames.contains(partitionColumn)
@@ -547,11 +638,12 @@ case class TableUtils(sparkSession: SparkSession) {
   def insertUnPartitioned(df: DataFrame,
                           tableName: String,
                           tableProperties: Map[String, String] = null,
+                          tableLocation: Option[String] = None,
                           saveMode: SaveMode = SaveMode.Overwrite,
                           fileFormat: String = "PARQUET"): Unit = {
 
     if (!tableExists(tableName)) {
-      sql(createTableSql(tableName, df.schema, Seq.empty[String], tableProperties, fileFormat))
+      sql(createTableSql(tableName, df.schema, Seq.empty[String], tableProperties, fileFormat, tableLocation))
     } else {
       if (tableProperties != null && tableProperties.nonEmpty) {
         alterTableProperties(tableName, tableProperties, unsetProperties = Seq(Constants.chrononArchiveFlag))
@@ -685,7 +777,8 @@ case class TableUtils(sparkSession: SparkSession) {
                              schema: StructType,
                              partitionColumns: Seq[String],
                              tableProperties: Map[String, String],
-                             fileFormat: String): String = {
+                             fileFormat: String,
+                             tableLocation: Option[String] = None): String = {
     val fieldDefinitions = schema
       .filterNot(field => partitionColumns.contains(field.name))
       .map(field => s"`${field.name}` ${field.dataType.catalogString}")
@@ -715,8 +808,13 @@ case class TableUtils(sparkSession: SparkSession) {
     } else {
       ""
     }
+    val tableLocationPath = if (tableLocation.nonEmpty) {
+      s"LOCATION '${tableLocation.get}'"
+    } else {
+      ""
+    }
     val fileFormatString = writeFormat.fileFormatString(fileFormat)
-    Seq(createFragment, partitionFragment, fileFormatString, propertiesFragment).mkString("\n")
+    Seq(createFragment, partitionFragment, fileFormatString, propertiesFragment, tableLocationPath).mkString("\n")
   }
 
   def alterTableProperties(tableName: String,

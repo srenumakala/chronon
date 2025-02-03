@@ -76,6 +76,9 @@ object Driver {
     this: ScallopConf =>
     val confPath: ScallopOption[String] = opt[String](required = true, descr = "Path to conf")
 
+    val tableLocation: ScallopOption[String] =
+      opt[String](required = true, descr = "Location to write the table to")
+
     val runFirstHole: ScallopOption[Boolean] =
       opt[Boolean](required = false,
                    default = Some(false),
@@ -557,7 +560,7 @@ object Driver {
     }
 
     def run(args: Args): Unit = {
-      GroupByUpload.run(parseConf[api.GroupBy](args.confPath()), args.endDate())
+      GroupByUpload.run(parseConf[api.GroupBy](args.confPath()), args.endDate(),  args.tableLocation())
     }
   }
 
