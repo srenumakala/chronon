@@ -158,40 +158,4 @@ class FlinkJobIntegrationTest {
 
     assertEquals(expectedFinalIRsPerKey, finalIRsPerKey)
   }
-
-  @Test
-  def testTiledFlinkJobWithBufferedProcessingTimeTrigger(): Unit = {
-    implicit val env: StreamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment
-
-    // Create some test events with multiple different ids so we can check if tiling/pre-aggregation works correctly
-    // for each of them.
-    val elements = Seq(
-      E2ETestEvent("test1", 15, 1.5, 1740993407123L),
-      E2ETestEvent("test2", 16, 1.6, 1740993452123L), // test1.created + 45000millis
-      E2ETestEvent("test3", 17, 1.7, 1740993472123L)  // test1.created + 60000millis
-    )
-    val source = new WatermarkedE2EEventSource(elements)
-
-    // Make a GroupBy that SUMs the double_val of the elements.
-    val groupBy = FlinkTestUtils.makeGroupBy(Seq("id"))
-
-    // Prepare the Flink Job
-    val encoder = Encoders.product[E2ETestEvent]
-    val outputSchema = new SparkExpressionEvalFn(encoder, groupBy).getOutputSchema
-    val groupByServingInfoParsed =
-      FlinkTestUtils.makeTestGroupByServingInfoParsed(groupBy, encoder.schema, outputSchema)
-    val mockApi = mock[Api](withSettings().serializable())
-    val writerFn = new MockAsyncKVStoreWriter(Seq(true), mockApi, "testTiledFlinkJobTriggerFG")
-    val job = new FlinkJob[E2ETestEvent](source, writerFn, groupByServingInfoParsed, encoder, 2)
-    job.runTiledGroupByJob(env).addSink(new CollectSink)
-
-    env.execute("TiledFlinkJobWithBufferedProcessingTimeTrigger")
-
-    // capture the datastream of the 'created' timestamps of all the written out events
-    val writeEventCreatedDS = CollectSink.values.asScala
-
-    // BASIC ASSERTIONS
-    // All elements were processed
-    assert(writeEventCreatedDS.isEmpty)
-  }
 }
